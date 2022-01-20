@@ -14,35 +14,36 @@ namespace DSMZip.Console
                 throw new Exception($"Error: The directory '{settings.TargetDirectory}' does not exist.");
             }
 
-            string targetName = settings.TargetDirectory + ".zip";
+            var targetDirectory = new DirectoryInfo(settings.TargetDirectory);
+            string archiveName = settings.TargetDirectory.TrimEnd('\\');
 
             if (!string.IsNullOrEmpty(settings.ArchiveName))
             {
-                targetName = settings.ArchiveName;
-
-                if (!targetName.EndsWith(".zip"))
-                {
-                    targetName += ".zip";
-                }
+                archiveName = targetDirectory.Name;
             }
 
+            if (!archiveName.EndsWith(".zip"))
+            {
+                archiveName = archiveName + ".zip";
+            }
+
+            var archiveFile = new FileInfo(settings.ToParentDirectory ? Path.Combine(targetDirectory.Parent.FullName, Path.GetFileName(archiveName)) : Path.Combine(Directory.GetCurrentDirectory(), Path.GetFileName(archiveName)));
+
             var dirObjects = new List<FileSystemInfo>();
-            var directory = new DirectoryInfo(settings.TargetDirectory);
+            dirObjects = targetDirectory.GetFileSystemInfos("*", SearchOption.AllDirectories).OrderBy(x => x.FullName).ToList();
 
-            dirObjects = directory.GetFileSystemInfos("*", SearchOption.AllDirectories).OrderBy(x => x.FullName).ToList();
-
-            long totalBytes = directory.GetFiles("*.*", SearchOption.AllDirectories).Sum(fi => fi.Length);
+            long totalBytes = targetDirectory.GetFiles("*.*", SearchOption.AllDirectories).Sum(fi => fi.Length);
             long totalBytesComplete = 0;
             int archiveProgressInteger = 0;
 
             AnsiConsole.Progress()
                 .Start(ctx =>
                 {
-                    var archiveTask = ctx.AddTask($"[Blue]Overall Progress ({targetName.TrimStart('.').TrimStart('/')})[/]");
+                    var archiveTask = ctx.AddTask($"[Blue]Overall Progress ({archiveFile.Name})[/]");
 
                     while (!ctx.IsFinished)
                     {
-                        using (var zipFileStream = new FileStream(targetName, FileMode.Create, FileAccess.Write))
+                        using (var zipFileStream = new FileStream(archiveFile.FullName, FileMode.Create, FileAccess.Write))
                         {
                             using var archive = new ZipArchive(zipFileStream, ZipArchiveMode.Create);
 
@@ -51,7 +52,7 @@ namespace DSMZip.Console
                                 if (dirObject.Attributes == FileAttributes.Directory)
                                 {
                                     var dir = new DirectoryInfo(dirObject.FullName);
-                                    var entryName = dir.FullName[directory.FullName.Length..];
+                                    var entryName = dir.FullName[targetDirectory.FullName.Length..];
                                     entryName = entryName.TrimStart('\\');
                                     ZipArchiveEntry entry = archive.CreateEntry(entryName + @"\", CompressionLevel.Optimal);
                                 }
@@ -62,7 +63,7 @@ namespace DSMZip.Console
                                     long fileBytesComplete = 0;
                                     int fileProgressInteger = 0;
 
-                                    var entryName = file.FullName[directory.FullName.Length..];
+                                    var entryName = file.FullName[targetDirectory.FullName.Length..];
                                     entryName = entryName.TrimStart('\\');
 
                                     var fileTask = ctx.AddTask($"[Yellow]Compressing {file.Name}[/]");
@@ -108,16 +109,12 @@ namespace DSMZip.Console
                     }
                 });
 
-            var filePath = Path.Combine(Directory.GetCurrentDirectory(), targetName);
-            var resultingFile = new FileInfo(filePath);
-            var resultingDirectoryName = resultingFile.Directory.FullName;
-
             var table = new Table();
             table.AddColumn(new TableColumn("[yellow]File Name[/]"));
             table.AddColumn(new TableColumn("[blue]Directory[/]"));
             table.AddColumn(new TableColumn("[green]Compressed Size[/]"));
             table.AddColumn(new TableColumn("[red]Original Size[/]"));
-            table.AddRow(new Markup(resultingFile.Name), new Markup(resultingDirectoryName), new Markup(Math.Round(resultingFile.Length / (double)1024) + " KB"), new Markup(Math.Round(totalBytes / (double)1024) + " KB"));
+            table.AddRow(new Markup(archiveFile.Name), new Markup(archiveFile.Directory.FullName), new Markup(Math.Round(archiveFile.Length / (double)1024) + " KB"), new Markup(Math.Round(totalBytes / (double)1024) + " KB"));
             AnsiConsole.Write(table);
 
             return 0;

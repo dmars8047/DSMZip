@@ -14,25 +14,37 @@ namespace DSMZip.Console
                 throw new Exception($"Error: The zip archive '{settings.TargetArchive}' does not exist.");
             }
 
-            var file = new FileInfo(settings.TargetArchive);
+            var archiveFile = new FileInfo(settings.TargetArchive);
 
-            if (file.Extension != ".zip")
+            if (archiveFile.Extension != ".zip")
             {
                 throw new Exception($"Error: The provided archive '{settings.TargetArchive}' does not appear to be a zip file.");
             }
 
-            var extractFolderName = string.IsNullOrEmpty(settings.ExtractFolderName) ? file.Name.TrimEnd('p').TrimEnd('i').TrimEnd('z').TrimEnd('.') : settings.ExtractFolderName;
+            var extractFolderName = string.IsNullOrEmpty(settings.ExtractFolderName) ? archiveFile.Name.TrimEnd('p').TrimEnd('i').TrimEnd('z').TrimEnd('.') : settings.ExtractFolderName;
 
-            var extractPath = settings.ToParentDirectory ? Path.Combine(file.Directory.FullName, extractFolderName) : Path.Combine(Directory.GetCurrentDirectory(), extractFolderName);
+            var extractPath = settings.ToParentDirectory ? Path.Combine(archiveFile.Directory.FullName, extractFolderName) : Path.Combine(Directory.GetCurrentDirectory(), extractFolderName);
 
-            if (Directory.Exists(extractPath))
+            System.Console.WriteLine($"Path: {extractPath}");
+            System.Console.WriteLine($"To Parent: {settings.ToParentDirectory}");
+
+            if (!settings.Overwrite && Directory.Exists(extractPath))
             {
                 throw new Exception($"Error: The extract folder '{extractPath}' already exist. Use the --overwrite flag to overwrite.");
             }
+            else if (settings.Overwrite && Directory.Exists(extractPath))
+            {
+                Directory.Delete(extractPath, true);
+            }
 
-            //ZipFile.ExtractToDirectory(file.FullName, extractPath, settings.Overwrite);
-            using var archiveStream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read);
+            var extractDirectory = Directory.CreateDirectory(extractPath);
+
+            long totalBytesComplete = 0;
+            int archiveExtractionProgressInteger = 0;
+
+            using var archiveStream = new FileStream(archiveFile.FullName, FileMode.Open, FileAccess.Read);
             using var zipArchive = new ZipArchive(archiveStream, ZipArchiveMode.Read);
+            long totalBytes = zipArchive.Entries.Sum(x => x.Length);
 
             AnsiConsole.Progress()
                 .Start(ctx =>
@@ -41,24 +53,64 @@ namespace DSMZip.Console
 
                     while (!ctx.IsFinished)
                     {
-                        foreach (var entry in zipArchive.Entries)
+                        foreach (var entry in zipArchive.Entries.OrderBy(x => x.FullName))
                         {
-                            using var entryStream = entry.Open();
+                            if (entry.FullName.EndsWith('\\'))
+                            {
+                                Directory.CreateDirectory(Path.Combine(extractDirectory.FullName, entry.FullName));
+                                continue;
+                            }
 
-                            //pickup here
+                            long entryBytesComplete = 0;
+                            long entrySize = entry.Length;
+                            int entryProgressInteger = 0;
+
+                            var entryTask = ctx.AddTask($"[Yellow]Extracting {entry.Name}[/]");
+
+                            using var entryStream = entry.Open();
+                            using var fileStream = new FileStream(Path.Combine(extractDirectory.FullName, entry.FullName), FileMode.Create, FileAccess.Write);
+
+                            var buffer = new byte[4096];
+                            long num = entryStream.Read(buffer);
+
+                            while (num > 0)
+                            {
+                                fileStream.Write(buffer);
+                                totalBytesComplete += num;
+                                entryBytesComplete += num;
+
+                                if (totalBytesComplete / (double)totalBytes * 100 > archiveExtractionProgressInteger + 1)
+                                {
+                                    archiveTask.Increment(1);
+                                    archiveExtractionProgressInteger++;
+                                }
+
+                                if (entryBytesComplete / (double)entrySize * 100 > entryProgressInteger + 1)
+                                {
+                                    entryTask.Increment(1);
+                                    entryProgressInteger++;
+                                }
+
+                                num = entryStream.Read(buffer);
+                            }
+
+                            entryTask.Value(100);
+                            entryTask.StopTask();
                         }
+
+                        archiveTask.Value(100);
+                        archiveTask.StopTask();
                     }
                 });
 
             var resultingDirectory = new DirectoryInfo(extractPath);
-            var totalBytes = resultingDirectory.GetFiles("*.*", SearchOption.AllDirectories).Sum(fi => fi.Length);
 
             var table = new Table();
             table.AddColumn(new TableColumn("[yellow]Directory Name[/]"));
             table.AddColumn(new TableColumn("[blue]Path[/]"));
             table.AddColumn(new TableColumn("[green]Compressed Size[/]"));
             table.AddColumn(new TableColumn("[red]Extracted Size[/]"));
-            table.AddRow(new Markup(resultingDirectory.Name), new Markup(resultingDirectory.FullName), new Markup(Math.Round(file.Length / (double)1024) + " KB"), new Markup(Math.Round(totalBytes / (double)1024) + " KB"));
+            table.AddRow(new Markup(resultingDirectory.Name), new Markup(resultingDirectory.FullName), new Markup(Math.Round(archiveFile.Length / (double)1024) + " KB"), new Markup(Math.Round(totalBytes / (double)1024) + " KB"));
 
             AnsiConsole.Write(table);
 

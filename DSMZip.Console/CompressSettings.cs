@@ -35,5 +35,10 @@ namespace DSMZip.Console
         /// </summary>
         [CommandOption("--name")]
         public string ArchiveName { get; set; }
+        /// <summary>
+        /// Will change the location of the resulting zip to the parent directory of the target directory.
+        /// </summary>
+        [CommandOption("--to-parent-directory")]
+        public bool ToParentDirectory { get; set; }
     }
 }
